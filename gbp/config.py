@@ -101,6 +101,7 @@ class GbpOptionParser(OptionParser):
                  'sign-tags'       : 'False',
                  'force-create'    : 'False',
                  'no-create-orig'  : 'False',
+                 'cleaner'         : '/bin/true',
                  'keyid'           : '',
                  'posttag'         : '',
                  'postbuild'       : '',
@@ -561,7 +562,6 @@ class GbpOptionParserDebian(GbpOptionParser):
     defaults = dict(GbpOptionParser.defaults)
     defaults.update( {
                        'builder'            : 'debuild -i -I',
-                       'cleaner'            : '/bin/true',
                      } )
 
 
@@ -576,7 +576,14 @@ class GbpOptionParserRpm(GbpOptionParser):
             'packaging-branch'          : 'master',
             'packaging-dir'             : '',
             'packaging-tag'             : 'packaging/%(version)s',
+            'packaging-tag-msg'         : '%(pkg)s %(vendor)s release '\
+                                          '%(version)s',
             'spec-file'                 : '',
+            'export-dir'                : '../rpmbuild',
+            'native'                    : 'auto',
+            'builder'                   : 'rpmbuild',
+            'export-specdir'            : 'SPECS',
+            'export-sourcedir'          : 'SOURCES',
                     })
 
     help = dict(GbpOptionParser.help)
@@ -596,9 +603,21 @@ class GbpOptionParserRpm(GbpOptionParser):
             'packaging-tag':
                 "Format string for packaging tags, RPM counterpart of the "
                 "'debian-tag' option, default is '%(packaging-tag)s'",
+            'packaging-tag-msg':
+                  ("Format string for packaging tag messages, "
+                   "default is '%(packaging-tag-msg)s'"),
             'spec-file':
                 "Spec file to use, causes the packaging-dir option to be "
                 "ignored, default is '%(spec-file)s'",
+            'native':
+                "Treat this package as native, default is '%(native)s'",
+            'export-specdir':
+                "Subdir (under EXPORT_DIR) where package spec file is "
+                "exported default is '%(export-specdir)s'",
+            'export-sourcedir':
+                "Subdir (under EXPORT_DIR) where packaging sources (other than "
+                "the spec file) are exported, default is "
+                "'%(export-sourcedir)s'",
                  })
 
 # vim:et:ts=4:sw=4:et:sts=4:ai:set list listchars=tab\:»·,trail\:·:
