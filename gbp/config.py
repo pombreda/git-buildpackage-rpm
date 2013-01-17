@@ -584,6 +584,7 @@ class GbpOptionParserRpm(GbpOptionParser):
             'builder'                   : 'rpmbuild',
             'export-specdir'            : 'SPECS',
             'export-sourcedir'          : 'SOURCES',
+            'spec-vcs-tag'              : '',
                     })
 
     help = dict(GbpOptionParser.help)
@@ -618,6 +619,9 @@ class GbpOptionParserRpm(GbpOptionParser):
                 "Subdir (under EXPORT_DIR) where packaging sources (other than "
                 "the spec file) are exported, default is "
                 "'%(export-sourcedir)s'",
+            'spec-vcs-tag':
+                "Set/update the 'VCS:' tag in the spec file, empty value "
+                "removes the tag entirely, default is '%(spec-vcs-tag)s'",
                  })
 
 # vim:et:ts=4:sw=4:et:sts=4:ai:set list listchars=tab\:»·,trail\:·:
