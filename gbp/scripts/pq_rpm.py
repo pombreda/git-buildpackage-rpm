@@ -463,6 +463,10 @@ def main(argv):
         gbp.log.err("%s is not a git repository" % (os.path.abspath('.')))
         return 1
 
+    if os.path.abspath('.') != repo.path:
+        gbp.log.warn("Switching to topdir before running commands")
+        os.chdir(repo.path)
+
     try:
         # Create base temporary directory for this run
         options.tmp_dir = tempfile.mkdtemp(dir=options.tmp_dir,
