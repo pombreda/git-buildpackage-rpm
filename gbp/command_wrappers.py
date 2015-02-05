@@ -68,7 +68,8 @@ class Command(object):
         log.debug("%s %s %s" % (self.cmd, self.args, args))
         self._reset_state()
         stdout_arg = subprocess.PIPE if self.capture_stdout else None
-        stderr_arg = subprocess.PIPE if self.capture_stderr else None
+        stderr_arg = subprocess.PIPE if self.capture_stderr else \
+                                        subprocess.STDOUT
         cmd = [ self.cmd ] + self.args + args
         if self.shell:
             # subprocess.call only cares about the first argument if shell=True
