@@ -23,6 +23,9 @@ import subprocess
 import os
 import os.path
 import signal
+import sys
+import tempfile
+
 import gbp.log as log
 
 class CommandExecFailed(Exception):
@@ -67,7 +70,14 @@ class Command(object):
 
         log.debug("%s %s %s" % (self.cmd, self.args, args))
         self._reset_state()
-        stdout_arg = subprocess.PIPE if self.capture_stdout else None
+        if self.capture_stdout:
+            stdout_arg = subprocess.PIPE
+        else:
+            # Pipe stdout of the child command to sys.stdout so that std*
+            # capture in nosetests catches the output of the command, too. We
+            # need to use a temporary file if sys.stdout is not a real file.
+            stdout_arg = sys.stdout if hasattr(sys.stdout, 'fileno') else \
+                                       tempfile.TemporaryFile()
         stderr_arg = subprocess.PIPE if self.capture_stderr else \
                                         subprocess.STDOUT
         cmd = [ self.cmd ] + self.args + args
@@ -84,6 +94,10 @@ class Command(object):
                                      stdout=stdout_arg,
                                      stderr=stderr_arg)
             (self.stdout, self.stderr) = popen.communicate()
+            # Write stdout content back to sys.stdout if the tempfile hack was used
+            if stdout_arg not in [sys.stdout, subprocess.PIPE]:
+                stdout_arg.seek(0)
+                sys.stdout.write(stdout_arg.read())
         except OSError as err:
             self.err_reason = "execution failed: %s" % str(err)
             self.retcode = 1
