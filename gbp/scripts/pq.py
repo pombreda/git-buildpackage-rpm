@@ -344,7 +344,6 @@ def build_parser(name):
     parser.add_config_file_option(option_name="color", dest="color", type='tristate')
     parser.add_config_file_option(option_name="color-scheme",
                                   dest="color_scheme")
-    parser.add_config_file_option(option_name="meta-closes", dest="meta_closes")
     return parser
 
 
