@@ -22,7 +22,7 @@ import os
 import logging
 import unittest
 
-from gbp.scripts.pq import generate_patches, export_patches
+from gbp.scripts.deb.pq import generate_patches, export_patches
 import gbp.scripts.common.pq as pq
 import gbp.patch_series
 

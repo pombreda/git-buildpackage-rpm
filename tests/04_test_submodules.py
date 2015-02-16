@@ -13,7 +13,7 @@ import gbp.log
 import gbp.git
 import gbp.command_wrappers
 
-from gbp.scripts import buildpackage
+from gbp.scripts.deb import buildpackage
 
 REPO = None
 REPODIR = None

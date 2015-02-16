@@ -21,6 +21,7 @@ from six.moves import configparser
 import sys
 import os, os.path
 from gbp.config import GbpOptionParser
+from gbp.errors import GbpError
 from gbp.scripts.supercommand import import_command
 import gbp.log
 
@@ -86,7 +87,7 @@ def print_cmd_all_values(cmd, printer):
         # valid options
         module = import_command(cmd)
         parser = module.build_parser(cmd)
-    except (AttributeError, ImportError):
+    except (AttributeError, GbpError):
         return 2
 
     for option in parser.valid_options:
