@@ -20,39 +20,38 @@
 from six.moves import configparser
 import sys
 import os, os.path
-from gbp.config import GbpOptionParser
+from gbp.config import GbpConfArgParser, GbpConfigDebian
 from gbp.scripts.supercommand import import_command
 import gbp.log
 
 
 def build_parser(name):
     try:
-        parser = GbpOptionParser(command=os.path.basename(name), prefix='',
-                             usage='%prog [options] command[.optionname] - display configuration settings')
+        parser = GbpConfArgParser.create_parser(prog=name,
+                                  description='display configuration settings')
     except configparser.ParsingError as err:
         gbp.log.err(err)
         return None
 
-    parser.add_option("-v", "--verbose", action="store_true", dest="verbose", default=False,
+    parser.add_arg("-v", "--verbose", action="store_true",
                       help="verbose command execution")
-    parser.add_config_file_option(option_name="color", dest="color", type='tristate')
-    parser.add_config_file_option(option_name="color-scheme",
-                                  dest="color_scheme")
+    parser.add_conf_file_arg("--color", type='tristate')
+    parser.add_conf_file_arg("--color-scheme")
+    parser.add_argument("query", metavar="QUERY",
+                        help="command[.optionname] to show")
     return parser
 
 
 def parse_args(argv):
     parser = build_parser(argv[0])
     if not parser:
-        return None, None
-    return parser.parse_args(argv)
+        return None
+    return parser.parse_args(argv[1:])
 
 
 def parse_cmd_config(command):
     """Make a command parse it's config files"""
-    parser = GbpOptionParser(command)
-    parser.parse_config_files()
-    return parser
+    return GbpConfigDebian(command)
 
 
 def print_cmd_single_value(query, printer):
@@ -66,8 +65,11 @@ def print_cmd_single_value(query, printer):
     except ValueError:
         return 2
 
-    parser = parse_cmd_config(cmd)
-    value = parser.get_config_file_value(option)
+    config = parse_cmd_config(cmd)
+    try:
+        value = config.get_value(option)
+    except KeyError:
+        value = None
     printer("%s=%s" % (query, value))
     return 0 if value else 1
 
@@ -89,8 +91,8 @@ def print_cmd_all_values(cmd, printer):
     except (AttributeError, ImportError):
         return 2
 
-    for option in parser.valid_options:
-        value = parser.get_config_file_value(option)
+    for option in parser.conf_file_args:
+        value = parser.get_conf_file_value(option)
         if value != '':
             printer("%s.%s=%s" % (cmd, option, value))
     return 0
@@ -104,22 +106,13 @@ def value_printer(value):
 def main(argv):
     retval = 1
 
-    (options, args) = parse_args(argv)
+    options = parse_args(argv)
     gbp.log.setup(options.color, options.verbose, options.color_scheme)
 
-    if not args:
-        gbp.log.error("No command given")
-        return 2
-    elif len(args) != 2:
-        gbp.log.error("Can only take a command or command.optionname, check --help")
-        return 2
+    if '.' in options.query:
+        retval = print_cmd_single_value(options.query, value_printer)
     else:
-        query = args[1]
-
-    if '.' in query:
-        retval = print_cmd_single_value(query, value_printer)
-    else:
-        retval = print_cmd_all_values(query, value_printer)
+        retval = print_cmd_all_values(options.query, value_printer)
     return retval
 
 if __name__ == '__main__':
