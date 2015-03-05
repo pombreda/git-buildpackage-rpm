@@ -206,6 +206,7 @@ def export_patches(repo, options):
         repo.set_branch(base)
         pq_branch = current
     else:
+        base = current
         pq_branch = pq_branch_name(current)
     spec = parse_spec(options, repo)
     upstream_commit = find_upstream_commit(repo, spec, options.upstream_tag)
@@ -214,6 +215,9 @@ def export_patches(repo, options):
     update_patch_series(repo, spec, upstream_commit, export_treeish, options)
 
     GitCommand('status')(['--', spec.specdir])
+
+    if options.drop:
+        drop_pq(repo, base)
 
 
 def safe_patches(queue, tmpdir_base):
@@ -404,6 +408,7 @@ switch         Switch to patch-queue branch and vice versa.""")
     parser.add_option("--force", dest="force", action="store_true",
             default=False,
             help="In case of import even import if the branch already exists")
+    parser.add_boolean_config_file_option("drop", dest='drop')
     parser.add_config_file_option(option_name="color", dest="color",
             type='tristate')
     parser.add_config_file_option(option_name="color-scheme",
