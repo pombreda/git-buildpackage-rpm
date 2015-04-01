@@ -29,7 +29,7 @@ import sys
 
 import gbp.log
 import gbp.tmpfile as tempfile
-from gbp.config import GbpOptionParserRpm
+from gbp.config import GbpOptionParserRpm, optparse_split_cb
 from gbp.rpm.git import GitRepositoryError, RpmGitRepository
 from gbp.git.modifier import GitModifier
 from gbp.command_wrappers import GitCommand, CommandExecFailed
@@ -96,10 +96,17 @@ def generate_patches(repo, start, end, outdir, options):
     # Generate patches
     for commit in reversed(repo.get_commits(start, end_commit)):
         info = repo.get_commit_info(commit)
-        (cmds, info['body']) = parse_gbp_commands(info,
-                                                  'gbp-rpm',
-                                                  ('ignore'),
-                                                  ('if', 'ifarch'))
+        cmds = {}
+        _cmds, info['body'] = parse_gbp_commands(info,
+                                                 'gbp',
+                                                 ('ignore'),
+                                                 ('topic'))
+        cmds.update(_cmds)
+        _cmds, info['body'] = parse_gbp_commands(info,
+                                                 'gbp-rpm',
+                                                 ('ignore'),
+                                                 ('if', 'ifarch'))
+        cmds.update(_cmds)
         if not 'ignore' in cmds:
             patch_fn = format_patch(outdir, repo, info, patches,
                                     options.patch_numbers)
@@ -199,6 +206,7 @@ def export_patches(repo, options):
         repo.set_branch(base)
         pq_branch = current
     else:
+        base = current
         pq_branch = pq_branch_name(current)
     spec = parse_spec(options, repo)
     upstream_commit = find_upstream_commit(repo, spec, options.upstream_tag)
@@ -207,6 +215,9 @@ def export_patches(repo, options):
     update_patch_series(repo, spec, upstream_commit, export_treeish, options)
 
     GitCommand('status')(['--', spec.specdir])
+
+    if options.drop:
+        drop_pq(repo, base)
 
 
 def safe_patches(queue, tmpdir_base):
@@ -261,6 +272,28 @@ def get_packager(spec):
     return GitModifier()
 
 
+def import_extra_files(repo, commitish, files, patch_ignore=True):
+    """Import branch-specific gbp.conf files to current branch"""
+    for path in files:
+        if path:
+            try:
+                repo.checkout_files(commitish, path)
+            except GitRepositoryError:
+                pass
+    repo_status = repo.status()
+    added = repo_status['A '] if 'A ' in repo_status else []
+    if added:
+        gbp.log.info("Importing additional file(s) from branch '%s' into '%s'" %
+                     (commitish, repo.get_branch()))
+        gbp.log.debug('Adding/commiting %s' % added)
+        commit_msg = ("Auto-import file(s) from branch '%s':\n    %s\n" %
+                      (commitish, '    '.join(added)))
+        if patch_ignore:
+            commit_msg += "\nGbp: Ignore"
+        repo.commit_files(added, msg=commit_msg)
+    return added
+
+
 def import_spec_patches(repo, options):
     """
     apply a series of patches in a spec/packaging dir to branch
@@ -313,6 +346,7 @@ def import_spec_patches(repo, options):
     try:
         gbp.log.info("Switching to branch '%s'" % pq_branch)
         repo.set_branch(pq_branch)
+        import_extra_files(repo, base, options.import_files)
 
         if not queue:
             return
@@ -374,6 +408,7 @@ switch         Switch to patch-queue branch and vice versa.""")
     parser.add_option("--force", dest="force", action="store_true",
             default=False,
             help="In case of import even import if the branch already exists")
+    parser.add_boolean_config_file_option("drop", dest='drop')
     parser.add_config_file_option(option_name="color", dest="color",
             type='tristate')
     parser.add_config_file_option(option_name="color-scheme",
@@ -384,6 +419,10 @@ switch         Switch to patch-queue branch and vice versa.""")
     parser.add_config_file_option(option_name="spec-file", dest="spec_file")
     parser.add_config_file_option(option_name="packaging-dir",
             dest="packaging_dir")
+    parser.add_config_file_option(option_name="import-files",
+            dest="import_files", type="string", action="callback",
+            callback=optparse_split_cb)
+
     return parser
 
 
@@ -428,6 +467,10 @@ def main(argv):
     except GitRepositoryError:
         gbp.log.err("%s is not a git repository" % (os.path.abspath('.')))
         return 1
+
+    if os.path.abspath('.') != repo.path:
+        gbp.log.warn("Switching to topdir before running commands")
+        os.chdir(repo.path)
 
     try:
         # Create base temporary directory for this run
