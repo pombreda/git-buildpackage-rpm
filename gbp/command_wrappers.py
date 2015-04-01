@@ -23,6 +23,9 @@ import subprocess
 import os
 import os.path
 import signal
+import sys
+import tempfile
+
 import gbp.log as log
 
 class CommandExecFailed(Exception):
@@ -67,8 +70,16 @@ class Command(object):
 
         log.debug("%s %s %s" % (self.cmd, self.args, args))
         self._reset_state()
-        stdout_arg = subprocess.PIPE if self.capture_stdout else None
-        stderr_arg = subprocess.PIPE if self.capture_stderr else None
+        if self.capture_stdout:
+            stdout_arg = subprocess.PIPE
+        else:
+            # Pipe stdout of the child command to sys.stdout so that std*
+            # capture in nosetests catches the output of the command, too. We
+            # need to use a temporary file if sys.stdout is not a real file.
+            stdout_arg = sys.stdout if hasattr(sys.stdout, 'fileno') else \
+                                       tempfile.TemporaryFile()
+        stderr_arg = subprocess.PIPE if self.capture_stderr else \
+                                        subprocess.STDOUT
         cmd = [ self.cmd ] + self.args + args
         if self.shell:
             # subprocess.call only cares about the first argument if shell=True
@@ -83,6 +94,10 @@ class Command(object):
                                      stdout=stdout_arg,
                                      stderr=stderr_arg)
             (self.stdout, self.stderr) = popen.communicate()
+            # Write stdout content back to sys.stdout if the tempfile hack was used
+            if stdout_arg not in [sys.stdout, subprocess.PIPE]:
+                stdout_arg.seek(0)
+                sys.stdout.write(stdout_arg.read())
         except OSError as err:
             self.err_reason = "execution failed: %s" % str(err)
             self.retcode = 1
@@ -105,8 +120,10 @@ class Command(object):
         This allows to replace stdout, stderr and err_reason in
         the self.run_error.
         """
-        return self.run_error.format(stdout=self.stdout,
-                                     stderr=self.stderr,
+        stdout = self.stdout.rstrip() if self.stdout else self.stdout
+        stderr = self.stderr.rstrip() if self.stderr else self.stderr
+        return self.run_error.format(stdout=stdout,
+                                     stderr=stderr,
                                      err_reason=self.err_reason)
 
     def __call__(self, args=[], quiet=False):
@@ -281,6 +298,16 @@ class UnpackZipArchive(Command):
 
         Command.__init__(self, 'unzip', [ "-q", archive, '-d', dir ])
         self.run_error = 'Couldn\'t unpack "%s": {err_reason}' % self.archive
+
+
+class CatenateZipArchive(Command):
+    """Wrap zipmerge tool to catenate a zip file with the next"""
+    def __init__(self, archive, **kwargs):
+        self.archive = archive
+        Command.__init__(self, 'zipmerge', [archive], **kwargs)
+
+    def __call__(self, target):
+        Command.__call__(self, [target])
 
 
 class GitCommand(Command):

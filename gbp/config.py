@@ -20,6 +20,7 @@ from optparse import OptionParser, OptionGroup, Option, OptionValueError
 from six.moves import configparser
 from copy import copy
 import os.path
+import tempfile
 
 try:
     from gbp.version import gbp_version
@@ -106,6 +107,7 @@ class GbpOptionParser(OptionParser):
                  'sign-tags'       : 'False',
                  'force-create'    : 'False',
                  'no-create-orig'  : 'False',
+                 'cleaner'         : '/bin/true',
                  'keyid'           : '',
                  'posttag'         : '',
                  'postbuild'       : '',
@@ -126,6 +128,7 @@ class GbpOptionParser(OptionParser):
                  'overlay'         : 'False',
                  'tarball-dir'     : '',
                  'ignore-new'      : 'False',
+                 'ignore-untracked': 'False',
                  'ignore-branch'   : 'False',
                  'meta'            : 'True',
                  'meta-closes'     : 'Closes|LP',
@@ -215,6 +218,9 @@ class GbpOptionParser(OptionParser):
                   "Meta tags for the bts close commands, default is '%(meta-closes)s'",
              'ignore-new':
                   "Build with uncommited changes in the source tree, default is '%(ignore-new)s'",
+             'ignore-untracked':
+                  "Build with untracked files in the source tree, default is "
+                  "'%(ignore-untracked)s'",
              'ignore-branch':
                   ("Build although debian-branch != current branch, "
                    "default is '%(ignore-branch)s'"),
@@ -355,13 +361,26 @@ class GbpOptionParser(OptionParser):
             files = [fname for fname in files if fname.startswith('/')]
         return files
 
-    def _read_config_file(self, parser, repo, filename):
+    def _read_config_file(self, parser, repo, filename, git_treeish):
         """Read config file"""
         str_fields = {}
         if repo:
             str_fields['git_dir'] = repo.git_dir
             if not repo.bare:
                 str_fields['top_dir'] = repo.path
+
+        # Read per-tree config file
+        if repo and git_treeish and filename.startswith('%(top_dir)s/'):
+            with tempfile.TemporaryFile() as tmp:
+                relpath = filename.replace('%(top_dir)s/', '')
+                try:
+                    config = repo.show('%s:%s' % (git_treeish, relpath))
+                    tmp.writelines(config)
+                except GitRepositoryError:
+                    pass
+                tmp.seek(0)
+                parser.readfp(tmp)
+                return
         try:
             filename = filename % str_fields
         except KeyError:
@@ -369,7 +388,7 @@ class GbpOptionParser(OptionParser):
             return
         parser.read(filename)
 
-    def parse_config_files(self):
+    def parse_config_files(self, git_treeish=None):
         """
         Parse the possible config files and set appropriate values
         default values
@@ -386,7 +405,7 @@ class GbpOptionParser(OptionParser):
             repo = None
         # Read all config files
         for filename in config_files:
-            self._read_config_file(parser, repo, filename)
+            self._read_config_file(parser, repo, filename, git_treeish)
         self.config.update(dict(parser.defaults()))
 
         # Make sure we read any legacy sections prior to the real subcommands
@@ -430,7 +449,8 @@ class GbpOptionParser(OptionParser):
         else:
             self.config['filter'] = []
 
-    def __init__(self, command, prefix='', usage=None, sections=[]):
+    def __init__(self, command, prefix='', usage=None, sections=[],
+                 git_treeish=None):
         """
         @param command: the command to build the config parser for
         @type command: C{str}
@@ -446,7 +466,7 @@ class GbpOptionParser(OptionParser):
         self.sections = sections
         self.prefix = prefix
         self.config = {}
-        self.parse_config_files()
+        self.parse_config_files(git_treeish)
         self.valid_options = []
 
         if self.command.startswith('git-') or self.command.startswith('gbp-'):
@@ -566,7 +586,6 @@ class GbpOptionParserDebian(GbpOptionParser):
     defaults = dict(GbpOptionParser.defaults)
     defaults.update( {
                        'builder'            : 'debuild -i -I',
-                       'cleaner'            : '/bin/true',
                      } )
 
 
@@ -581,7 +600,15 @@ class GbpOptionParserRpm(GbpOptionParser):
             'packaging-branch'          : 'master',
             'packaging-dir'             : '',
             'packaging-tag'             : 'packaging/%(version)s',
+            'packaging-tag-msg'         : '%(pkg)s %(vendor)s release '\
+                                          '%(version)s',
             'spec-file'                 : '',
+            'export-dir'                : '../rpmbuild',
+            'native'                    : 'auto',
+            'builder'                   : 'rpmbuild',
+            'export-specdir'            : 'SPECS',
+            'export-sourcedir'          : 'SOURCES',
+            'spec-vcs-tag'              : '',
             'import-files'              : ['.gbp.conf',
                                            'debian/gbp.conf'],
                     })
@@ -603,9 +630,24 @@ class GbpOptionParserRpm(GbpOptionParser):
             'packaging-tag':
                 "Format string for packaging tags, RPM counterpart of the "
                 "'debian-tag' option, default is '%(packaging-tag)s'",
+            'packaging-tag-msg':
+                  ("Format string for packaging tag messages, "
+                   "default is '%(packaging-tag-msg)s'"),
             'spec-file':
                 "Spec file to use, causes the packaging-dir option to be "
                 "ignored, default is '%(spec-file)s'",
+            'native':
+                "Treat this package as native, default is '%(native)s'",
+            'export-specdir':
+                "Subdir (under EXPORT_DIR) where package spec file is "
+                "exported default is '%(export-specdir)s'",
+            'export-sourcedir':
+                "Subdir (under EXPORT_DIR) where packaging sources (other than "
+                "the spec file) are exported, default is "
+                "'%(export-sourcedir)s'",
+            'spec-vcs-tag':
+                "Set/update the 'VCS:' tag in the spec file, empty value "
+                "removes the tag entirely, default is '%(spec-vcs-tag)s'",
             'import-files':
                 "Comma-separated list of additional file(s) to import from "
                 "packaging branch. These will appear as one monolithic patch "

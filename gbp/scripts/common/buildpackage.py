@@ -24,7 +24,7 @@ import tempfile
 import shutil
 import subprocess
 
-from gbp.command_wrappers import (CatenateTarArchive)
+from gbp.command_wrappers import (CatenateTarArchive, CatenateZipArchive)
 from gbp.git.repository import GitRepository, GitRepositoryError
 from gbp.errors import GbpError
 import gbp.log
@@ -32,7 +32,10 @@ import gbp.log
 # when we want to reference the index in a treeish context we call it:
 index_name = "INDEX"
 # when we want to reference the working copy in treeish context we call it:
-wc_name = "WC"
+wc_names = {'WC':           {'force': True, 'untracked': True},
+            'WC.TRACKED':   {'force': False, 'untracked': False},
+            'WC.UNTRACKED': {'force': False, 'untracked': True},
+            'WC.IGNORED':   {'force': True, 'untracked': True}}
 # index file name used to export working copy
 wc_index = ".git/gbp_index"
 
@@ -53,51 +56,59 @@ def sanitize_prefix(prefix):
     return '/'
 
 
-def git_archive_submodules(repo, treeish, output, prefix, comp_type, comp_level, comp_opts):
+def git_archive_submodules(repo, treeish, output, prefix, comp_type, comp_level,
+                           comp_opts, format='tar'):
     """
-    Create tar.gz of an archive with submodules
+    Create a source tree archive with submodules.
 
-    since git-archive always writes an end of tarfile trailer we concatenate
+    Since git-archive always writes an end of tarfile trailer we concatenate
     the generated archives using tar and compress the result.
 
     Exception handling is left to the caller.
     """
     prefix = sanitize_prefix(prefix)
-    tarfile = output.rsplit('.', 1)[0]
     tempdir = tempfile.mkdtemp()
-    submodule_tarfile = os.path.join(tempdir, "submodule.tar")
+    main_archive = os.path.join(tempdir, "main.%s" % format)
+    submodule_archive = os.path.join(tempdir, "submodule.%s" % format)
     try:
-        # generate main tarfile
-        repo.archive(format='tar', prefix=prefix,
-                     output=tarfile, treeish=treeish)
+        # generate main (tmp) archive
+        repo.archive(format=format, prefix=prefix,
+                     output=main_archive, treeish=treeish)
 
-        # generate each submodule's tarfile and append it to the main archive
+        # generate each submodule's arhive and append it to the main archive
         for (subdir, commit) in repo.get_submodules(treeish):
             tarpath = [subdir, subdir[2:]][subdir.startswith("./")]
 
             gbp.log.debug("Processing submodule %s (%s)" % (subdir, commit[0:8]))
-            repo.archive(format='tar', prefix='%s%s/' % (prefix, tarpath),
-                         output=submodule_tarfile, treeish=commit, cwd=subdir)
-            CatenateTarArchive(tarfile)(submodule_tarfile)
+            repo.archive(format=format, prefix='%s%s/' % (prefix, tarpath),
+                         output=submodule_archive, treeish=commit, cwd=subdir)
+            if format == 'tar':
+                CatenateTarArchive(main_archive)(submodule_archive)
+            elif format == 'zip':
+                CatenateZipArchive(main_archive)(submodule_archive)
 
         # compress the output
-        ret = os.system("%s -%s %s %s" % (comp_type, comp_level, comp_opts, tarfile))
-        if ret:
-            raise GbpError("Error creating %s: %d" % (output, ret))
+        if comp_type:
+            ret = os.system("%s --stdout -%s %s %s > %s" % (comp_type, comp_level, comp_opts, main_archive, output))
+            if ret:
+                raise GbpError("Error creating %s: %d" % (output, ret))
+        else:
+            shutil.move(main_archive, output)
     finally:
         shutil.rmtree(tempdir)
 
 
-def git_archive_single(treeish, output, prefix, comp_type, comp_level, comp_opts):
+def git_archive_single(treeish, output, prefix, comp_type, comp_level, comp_opts, format='tar'):
     """
-    Create tar.gz of an archive without submodules
+    Create an archive without submodules
 
     Exception handling is left to the caller.
     """
     prefix = sanitize_prefix(prefix)
     pipe = pipes.Template()
-    pipe.prepend("git archive --format=tar --prefix=%s %s" % (prefix, treeish), '.-')
-    pipe.append('%s -c -%s %s' % (comp_type, comp_level, comp_opts),  '--')
+    pipe.prepend("git archive --format=%s --prefix=%s %s" % (format, prefix, treeish), '.-')
+    if comp_type:
+        pipe.append('%s -c -%s %s' % (comp_type, comp_level, comp_opts),  '--')
     ret = pipe.copy('', output)
     if ret:
         raise GbpError("Error creating %s: %d" % (output, ret))
@@ -142,9 +153,10 @@ def dump_tree(repo, export_dir, treeish, with_submodules, recursive=True):
     return True
 
 
-def write_wc(repo, force=True):
+def write_wc(repo, force=True, untracked=True):
     """write out the current working copy as a treeish object"""
-    repo.add_files(repo.path, force=force, index_file=wc_index)
+    clone_index()
+    repo.add_files(repo.path, force=force, untracked=untracked, index_file=wc_index)
     tree = repo.write_tree(index_file=wc_index)
     return tree
 
@@ -153,3 +165,9 @@ def drop_index():
     """drop our custom index"""
     if os.path.exists(wc_index):
         os.unlink(wc_index)
+
+def clone_index():
+    """Copy the current index file to our custom index file"""
+    indexfn = ".git/index"
+    if os.path.exists(indexfn):
+        shutil.copy2(indexfn, wc_index)

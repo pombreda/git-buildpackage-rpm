@@ -35,7 +35,7 @@ from gbp.deb.upstreamsource import DebianUpstreamSource
 from gbp.errors import GbpError
 import gbp.log
 import gbp.notifications
-from gbp.scripts.common.buildpackage import (index_name, wc_name,
+from gbp.scripts.common.buildpackage import (index_name, wc_names,
                                              git_archive_submodules,
                                              git_archive_single, dump_tree,
                                              write_wc, drop_index)
@@ -122,8 +122,9 @@ def write_tree(repo, options):
     if options.export_dir:
         if options.export == index_name:
             tree = repo.write_tree()
-        elif options.export == wc_name:
-            tree = write_wc(repo)
+        elif options.export in wc_names:
+            tree = write_wc(repo, wc_names[options.export]['force'],
+                            wc_names[options.export]['untracked'])
         else:
             tree = options.export
         if not repo.has_treeish(tree):
@@ -369,9 +370,10 @@ def changes_file_suffix(dpkg_args):
         return os.getenv('ARCH', None) or du.get_arch()
 
 
-def build_parser(name, prefix=None):
+def build_parser(name, prefix=None, git_treeish=None):
     try:
-        parser = GbpOptionParserDebian(command=os.path.basename(name), prefix=prefix)
+        parser = GbpOptionParserDebian(command=os.path.basename(name),
+                                       prefix=prefix, git_treeish=git_treeish)
     except configparser.ParsingError as err:
         gbp.log.err(err)
         return None
@@ -388,6 +390,8 @@ def build_parser(name, prefix=None):
     parser.add_option_group(export_group)
 
     parser.add_boolean_config_file_option(option_name = "ignore-new", dest="ignore_new")
+    parser.add_boolean_config_file_option(option_name = "ignore-untracked",
+                                          dest="ignore_untracked")
     parser.add_option("--git-verbose", action="store_true", dest="verbose", default=False,
                       help="verbose command execution")
     parser.add_config_file_option(option_name="color", dest="color", type='tristate')
@@ -453,7 +457,8 @@ def build_parser(name, prefix=None):
     return parser
 
 
-def parse_args(argv, prefix):
+def parse_args(argv, prefix, git_treeish=None):
+    """Parse config and command line arguments"""
     args = [ arg for arg in argv[1:] if arg.find('--%s' % prefix) == 0 ]
     dpkg_args = [ arg for arg in argv[1:] if arg.find('--%s' % prefix) == -1 ]
 
@@ -462,7 +467,7 @@ def parse_args(argv, prefix):
         if arg in dpkg_args:
             args.append(arg)
 
-    parser = build_parser(argv[0], prefix=prefix)
+    parser = build_parser(argv[0], prefix=prefix, git_treeish=git_treeish)
     if not parser:
         return None, None, None
     options, args = parser.parse_args(args)
@@ -513,14 +518,25 @@ def main(argv):
     else:
         repo_dir = os.path.abspath(os.path.curdir)
 
+    # Determine tree-ish to be exported
+    try:
+        tree = write_tree(repo, options)
+    except GbpError as err:
+        gbp.log.err(err)
+        return 1
+    # Re-parse config options with using the per-tree config file(s) from the
+    # exported tree-ish
+    options, gbp_args, builder_args = parse_args(argv, prefix, tree)
+
     try:
         Command(options.cleaner, shell=True)()
         if not options.ignore_new:
-            (ret, out) = repo.is_clean()
+            (ret, out) = repo.is_clean(options.ignore_untracked)
             if not ret:
                 gbp.log.err("You have uncommitted changes in your source tree:")
                 gbp.log.err(out)
-                raise GbpError("Use --git-ignore-new to ignore.")
+                raise GbpError("Use --git-ignore-new or --git-ignore-untracked "
+                               "to ignore.")
 
         try:
             branch = repo.get_branch()
@@ -535,7 +551,6 @@ def main(argv):
                 raise GbpError("Use --git-ignore-branch to ignore or --git-debian-branch to set the branch name.")
 
         head = repo.head
-        tree = write_tree(repo, options)
         source = source_vfs(repo, options, tree)
         if not options.tag_only:
             output_dir = prepare_output_dir(options.export_dir)
@@ -636,11 +651,12 @@ def main(argv):
         if options.export_dir and options.purge and not retval:
             RemoveTree(export_dir)()
 
-        if source and not gbp.notifications.notify(source.changelog,
-                                                   not retval,
-                                                   options.notify):
-            gbp.log.err("Failed to send notification")
-            retval = 1
+        if source:
+            summary, msg = gbp.notifications.build_msg(source.changelog,
+                                                       not retval)
+            if not gbp.notifications.notify(summary, msg, options.notify):
+                gbp.log.err("Failed to send notification")
+                retval = 1
 
     return retval
 

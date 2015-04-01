@@ -28,7 +28,7 @@ import shutil
 import sys
 
 import gbp.log
-import gbp.tmpfile as tempfile
+from gbp.tmpfile import init_tmpdir, del_tmpdir, tempfile
 from gbp.config import GbpOptionParserRpm, optparse_split_cb
 from gbp.rpm.git import GitRepositoryError, RpmGitRepository
 from gbp.git.modifier import GitModifier
@@ -166,7 +166,6 @@ def parse_spec(options, repo, treeish=None):
     """
     try:
         if options.spec_file:
-            options.packaging_dir = os.path.dirname(options.spec_file)
             if not treeish:
                 spec = SpecFile(options.spec_file)
             else:
@@ -182,6 +181,7 @@ def parse_spec(options, repo, treeish=None):
         raise GbpError("Can't parse spec: %s" % err)
     relpath = spec.specpath if treeish else os.path.relpath(spec.specpath,
                                                             repo.path)
+    options.packaging_dir = os.path.dirname(relpath)
     gbp.log.debug("Using '%s' from '%s'" % (relpath, treeish or 'working copy'))
     return spec
 
@@ -220,18 +220,16 @@ def export_patches(repo, options):
         drop_pq(repo, base)
 
 
-def safe_patches(queue, tmpdir_base):
+def safe_patches(queue):
     """
     Safe the current patches in a temporary directory
-    below 'tmpdir_base'. Also, uncompress compressed patches here.
 
     @param queue: an existing patch queue
-    @param tmpdir_base: base under which to create tmpdir
-    @return: tmpdir and a safed queue (with patches in tmpdir)
+    @return: safed queue (with patches in tmpdir)
     @rtype: tuple
     """
 
-    tmpdir = tempfile.mkdtemp(dir=tmpdir_base, prefix='patchimport_')
+    tmpdir = tempfile.mkdtemp(prefix='patchimport_')
     safequeue = PatchSeries()
 
     if len(queue) > 0:
@@ -335,13 +333,13 @@ def import_spec_patches(repo, options):
 
     # Put patches in a safe place
     if spec_treeish:
-        packaging_tmp = tempfile.mkdtemp(prefix='dump_', dir=options.tmp_dir)
+        packaging_tmp = tempfile.mkdtemp(prefix='dump_')
         packaging_tree = '%s:%s' % (spec_treeish, options.packaging_dir)
         dump_tree(repo, packaging_tmp, packaging_tree, with_submodules=False,
                   recursive=False)
         spec.specdir = packaging_tmp
     in_queue = spec.patchseries()
-    queue = safe_patches(in_queue, options.tmp_dir)
+    queue = safe_patches(in_queue)
     # Do import
     try:
         gbp.log.info("Switching to branch '%s'" % pq_branch)
@@ -474,8 +472,7 @@ def main(argv):
 
     try:
         # Create base temporary directory for this run
-        options.tmp_dir = tempfile.mkdtemp(dir=options.tmp_dir,
-                                           prefix='gbp-pq-rpm_')
+        init_tmpdir(options.tmp_dir, prefix='pq-rpm_')
         current = repo.get_branch()
         if action == "export":
             export_patches(repo, options)
@@ -500,7 +497,7 @@ def main(argv):
             gbp.log.err(err)
         retval = 1
     finally:
-        shutil.rmtree(options.tmp_dir, ignore_errors=True)
+        del_tmpdir()
 
     return retval
 
